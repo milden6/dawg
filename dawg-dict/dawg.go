@@ -38,6 +38,11 @@ type uncheckedNode struct {
 	child  int
 }
 
+type seqStack struct {
+	sequence []rune
+	count    int
+}
+
 // EnumFn is a method that you implement. It will be called with
 // all prefixes stored in the DAWG. If final is true, the prefix
 // represents a complete word that has been stored.
@@ -65,7 +70,7 @@ type Finder interface {
 	FindAllPrefixesOf(input string) []FindResult
 
 	// Find words by given prefix
-	FindByPrefix(input string) []string
+	FindAllByPrefix(input string) []string
 
 	// Find first word by given prefix
 	FindFirstByPrefix(input string) string
@@ -281,15 +286,93 @@ func (d *dawg) Print() {
 	DumpFile(d.r)
 }
 
-// FindByPrefix returns all items in the dawg with given prefix.
+// FindAllByPrefix returns all items in the dawg with given prefix.
 // It will panic if the dawg is not finished.
-func (d *dawg) FindByPrefix(input string) []string {
+func (d *dawg) FindAllByPrefix(input string) []string {
 	d.checkFinished()
 
-	findedPrefixes := []string{}
+	foundPrefixes := []string{}
+	wordSl := make([]rune, 0, len(input)*2)
 
-	//TODO: implement logic
-	return findedPrefixes
+	r := newBitSeeker(d.r)
+	node := rootNode
+	edgeStack := []edgeResult{}
+
+	for _, letter := range input {
+		edgeEnd, _, ok := d.getEdge(&r, edgeStart{node: node, ch: letter})
+		// not found any prefix
+		if !ok {
+			return []string{}
+		}
+
+		node = edgeEnd.node
+		wordSl = append(wordSl, letter)
+
+		//last iteration
+		if string(wordSl) == input {
+			edgeStack = append(edgeStack, edgeResult{
+				ch:    letter,
+				count: edgeEnd.count,
+				node:  edgeEnd.node,
+			})
+			//need to remove last letter for stack first element
+			wordSl = wordSl[:len(wordSl)-1]
+		}
+
+	}
+
+	prevSeqsStack := []seqStack{}
+
+	//while stack not empty
+	for len(edgeStack) > 0 {
+		//pop edge from stack
+		edge := edgeStack[len(edgeStack)-1]
+		edgeStack = edgeStack[:len(edgeStack)-1]
+
+		wordSl = append(wordSl, edge.ch)
+
+		nodeResult := d.getNode(&r, edge.node)
+
+		// more than one edge
+		if len(nodeResult.edges) > 1 {
+			//push char sequence to stack
+			prevSeqsStack = append(prevSeqsStack, seqStack{
+				sequence: wordSl,
+				count:    len(nodeResult.edges),
+			})
+		}
+
+		if nodeResult.final {
+			foundPrefixes = append(foundPrefixes, string(wordSl))
+
+			if len(prevSeqsStack) < 1 {
+				continue
+			}
+
+			prevSeq := prevSeqsStack[len(prevSeqsStack)-1]
+			prevSeq.count--
+			wordSl = prevSeq.sequence
+
+			if prevSeq.count != 1 {
+				continue
+			}
+
+			//pop char sequence from stack
+			prevSeqsStack = prevSeqsStack[:len(prevSeqsStack)-1]
+			if len(prevSeqsStack) > 0 {
+				prevSeqsStack[len(prevSeqsStack)-1].count--
+			}
+
+		}
+
+		//reverse edge order: from left to rigth edge
+		for i := len(nodeResult.edges) - 1; i >= 0; i-- {
+			//push edge to stack
+			edgeStack = append(edgeStack, nodeResult.edges[i])
+		}
+	}
+
+	return foundPrefixes
 }
 
 // FindFirstByPrefix returns first item with given prefix.
